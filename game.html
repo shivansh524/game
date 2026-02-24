@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Neon Survival</title>
+<style>
+:root {
+  --primary: #00f3ff;
+  --danger: #ff0055;
+  --success: #00ff9d;
+  --bg: #0f0f1a;
+  --ui-bg: rgba(0, 0, 0, 0.85);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+body { background: var(--bg); color: #fff; overflow: hidden; font-family: system-ui, sans-serif; }
+canvas { position: absolute; inset: 0; }
+
+#ui-layer { position: absolute; inset: 0; pointer-events: none; }
+.hud { position: absolute; top: 20px; left: 20px; font-weight: 700; text-shadow: 0 0 5px var(--primary); }
+.hud-right { left: auto; right: 20px; }
+.screen {
+  position: absolute; inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
+  background: var(--ui-bg); padding: 32px; border-radius: 12px;
+  border: 2px solid var(--primary); text-align: center; display: none; pointer-events: auto;
+}
+.screen.active { display: block; }
+.btn {
+  background: var(--primary); color: #001; border: none; padding: 12px 24px;
+  font-weight: 800; border-radius: 6px; cursor: pointer;
+}
+.btn:hover { box-shadow: 0 0 12px var(--primary); }
+#shield-bar {
+  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  height: 6px; width: 0%; background: var(--success); box-shadow: 0 0 10px var(--success);
+}
+</style>
+</head>
+<body>
+
+<canvas id="gameCanvas"></canvas>
+
+<div id="ui-layer">
+  <div class="hud">SCORE: <span id="scoreEl">0</span></div>
+  <div class="hud hud-right">HIGH: <span id="highScoreEl">0</span></div>
+  <div id="shield-bar"></div>
+
+  <div id="startScreen" class="screen active">
+    <h1>Neon Survival</h1>
+    <p>Avoid red blocks. Collect green orbs. Blue gives shield.</p>
+    <button class="btn" id="startBtn">Start Game</button>
+    <div style="opacity:.7;margin-top:8px">WASD or Arrow Keys</div>
+  </div>
+
+  <div id="gameOverScreen" class="screen">
+    <h2>GAME OVER</h2>
+    <p>Final Score: <span id="finalScoreEl">0</span></p>
+    <button class="btn" id="restartBtn">Try Again</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('scoreEl');
+const highScoreEl = document.getElementById('highScoreEl');
+const finalScoreEl = document.getElementById('finalScoreEl');
+const startScreen = document.getElementById('startScreen');
+const gameOverScreen = document.getElementById('gameOverScreen');
+const startBtn = document.getElementById('startBtn');
+const restartBtn = document.getElementById('restartBtn');
+const shieldBar = document.getElementById('shield-bar');
+
+function resize() { canvas.width = innerWidth; canvas.height = innerHeight; }
+addEventListener('resize', resize); resize();
+
+let gameRunning = false;
+let score = 0;
+let highScore = Number(localStorage.getItem('neonSurvivalHighScore') || 0);
+highScoreEl.textContent = highScore;
+
+const keys = { ArrowUp:0, ArrowDown:0, ArrowLeft:0, ArrowRight:0, w:0, a:0, s:0, d:0 };
+addEventListener('keydown', e => keys[e.key] = 1);
+addEventListener('keyup', e => keys[e.key] = 0);
+
+class Player {
+  constructor() {
+    this.size = 28;
+    this.x = canvas.width/2 - 14;
+    this.y = canvas.height - 90;
+    this.speed = 6;
+    this.shield = 0;
+  }
+  update() {
+    if (keys.ArrowUp || keys.w) this.y -= this.speed;
+    if (keys.ArrowDown || keys.s) this.y += this.speed;
+    if (keys.ArrowLeft || keys.a) this.x -= this.speed;
+    if (keys.ArrowRight || keys.d) this.x += this.speed;
+    this.x = Math.max(0, Math.min(canvas.width - this.size, this.x));
+    this.y = Math.max(0, Math.min(canvas.height - this.size, this.y));
+    if (this.shield > 0) {
+      this.shield--;
+      shieldBar.style.width = (this.shield / 300 * 100) + '%';
+    } else shieldBar.style.width = '0%';
+  }
+  draw() {
+    ctx.shadowBlur = 12;
+    ctx.shadowColor = this.shield ? '#00ff9d' : '#00f3ff';
+    ctx.fillStyle = this.shield ? '#00ff9d' : '#00f3ff';
+    ctx.fillRect(this.x, this.y, this.size, this.size);
+    ctx.shadowBlur = 0;
+  }
+}
+
+class Enemy {
+  constructor() {
+    this.size = Math.random()*18 + 18;
+    this.x = Math.random() * (canvas.width - this.size);
+    this.y = -this.size;
+    this.speed = Math.random()*2 + 2;
+  }
+  update() { this.y += this.speed; }
+  draw() {
+    ctx.shadowBlur = 12;
+    ctx.shadowColor = '#ff0055';
+    ctx.fillStyle = '#ff0055';
+    ctx.fillRect(this.x, this.y, this.size, this.size);
+    ctx.shadowBlur = 0;
+  }
+}
+
+class Orb {
+  constructor(type='score') {
+    this.size = 14;
+    this.x = Math.random() * (canvas.width - this.size);
+    this.y = -this.size;
+    this.speed = 2.5;
+    this.type = type; // 'score' or 'shield'
+  }
+  update() { this.y += this.speed; }
+  draw() {
+    const color = this.type === 'shield' ? '#00f3ff' : '#00ff9d';
+    ctx.shadowBlur = 10; ctx.shadowColor = color; ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(this.x+7, this.y+7, 7, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+}
+
+let player, enemies = [], orbs = [], frame = 0;
+
+function collide(a, b) {
+  return a.x < b.x + b.size && a.x + a.size > b.x &&
+         a.y < b.y + b.size && a.y + a.size > b.y;
+}
+
+function startGame() {
+  gameRunning = true;
+  score = 0; frame = 0;
+  enemies = []; orbs = [];
+  player = new Player();
+  startScreen.classList.remove('active');
+  gameOverScreen.classList.remove('active');
+  loop();
+}
+
+function gameOver() {
+  gameRunning = false;
+  finalScoreEl.textContent = score;
+  if (score > highScore) {
+    highScore = score;
+    localStorage.setItem('neonSurvivalHighScore', highScore);
+    highScoreEl.textContent = highScore;
+  }
+  gameOverScreen.classList.add('active');
+}
+
+function loop() {
+  if (!gameRunning) return;
+  requestAnimationFrame(loop);
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  frame++;
+  if (frame % 40 === 0) enemies.push(new Enemy());
+  if (frame % 140 === 0) orbs.push(new Orb(Math.random() < .25 ? 'shield' : 'score'));
+
+  player.update(); player.draw();
+
+  enemies.forEach((e,i) => {
+    e.update(); e.draw();
+    if (collide(player, e)) {
+      if (player.shield > 0) enemies.splice(i,1);
+      else return gameOver();
+    }
+    if (e.y > canvas.height + 40) enemies.splice(i,1);
+  });
+
+  orbs.forEach((o,i) => {
+    o.update(); o.draw();
+    if (collide(player, o)) {
+      if (o.type === 'shield') player.shield = 300;
+      else score += 10;
+      scoreEl.textContent = score;
+      orbs.splice(i,1);
+    }
+    if (o.y > canvas.height + 40) orbs.splice(i,1);
+  });
+}
+
+startBtn.onclick = startGame;
+restartBtn.onclick = startGame;
+</script>
+
+</body>
+</html>
